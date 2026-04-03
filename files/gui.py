@@ -5,19 +5,19 @@ Dark terminal aesthetic with live event log and status indicators.
 
 import os
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+from tkinter import scrolledtext, messagebox, filedialog
 from pathlib import Path
 from datetime import datetime
 
 from decoys  import create_decoys, restore_decoys, remove_decoys, get_decoy_dir
 from monitor import ThreatEngine
-from alerts  import show_popup_alert, send_email_alert
+from alerts  import show_popup_alert, send_telegram_alert, set_root
 
 # ── colour palette ────────────────────────────────────────────────────────────
 BG       = "#0d0d0d"
 BG2      = "#141414"
 BG3      = "#1c1c1c"
-ACCENT   = "#00ff88"      # green honeypot colour
+ACCENT   = "#00ff88"
 DANGER   = "#ff3333"
 WARN     = "#ffaa00"
 DIM      = "#444444"
@@ -38,12 +38,13 @@ class HoneyShieldApp:
 
         self.engine: ThreatEngine | None = None
         self.decoy_paths: list[Path]     = []
-        self.watch_dir   = tk.StringVar(value=str(Path.home() / "Documents"))
-        self.running     = tk.BooleanVar(value=False)
-        self.email_cfg   = {}   # populated via settings dialog
+        self.watch_dir    = tk.StringVar(value=str(Path.home() / "Documents"))
+        self.running      = tk.BooleanVar(value=False)
+        self.telegram_cfg = {}   # populated via telegram settings dialog
 
         self._build_ui()
-        self._log("🛡  HoneyShield ready. Choose a folder and click  Start Monitoring.")
+        set_root(root)   # register root with alerts.py for thread-safe popups
+        self._log("HoneyShield ready. Choose a folder and click Start Monitoring.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # UI construction
@@ -54,10 +55,10 @@ class HoneyShieldApp:
         top = tk.Frame(self.root, bg=BG, pady=10)
         top.pack(fill="x", padx=20)
 
-        tk.Label(top, text="🍯 HoneyShield", font=FONT_BIG,
+        tk.Label(top, text="HoneyShield", font=FONT_BIG,
                  fg=ACCENT, bg=BG).pack(side="left")
 
-        self.status_lbl = tk.Label(top, text="● IDLE",
+        self.status_lbl = tk.Label(top, text="IDLE",
                                    font=("Courier New", 11, "bold"),
                                    fg=DIM, bg=BG)
         self.status_lbl.pack(side="right")
@@ -81,15 +82,15 @@ class HoneyShieldApp:
         cards = tk.Frame(self.root, bg=BG)
         cards.pack(fill="x", padx=20, pady=(0, 10))
 
-        self.stat_decoys   = self._stat_card(cards, "Decoy Files",  "0",   ACCENT)
-        self.stat_events   = self._stat_card(cards, "Events",       "0",   TEXT)
-        self.stat_alerts   = self._stat_card(cards, "Alerts",       "0",   DANGER)
-        self.stat_entropy  = self._stat_card(cards, "High Entropy", "0",   WARN)
+        self.stat_decoys  = self._stat_card(cards, "Decoy Files",  "0", ACCENT)
+        self.stat_events  = self._stat_card(cards, "Events",       "0", TEXT)
+        self.stat_alerts  = self._stat_card(cards, "Alerts",       "0", DANGER)
+        self.stat_entropy = self._stat_card(cards, "High Entropy", "0", WARN)
         self._event_count  = 0
         self._alert_count  = 0
-        self._entropy_count= 0
+        self._entropy_count = 0
 
-        # ── log area ─────────────────────────────────────────────────────────
+        # ── log area ──────────────────────────────────────────────────────────
         log_frame = tk.Frame(self.root, bg=BG3, bd=0)
         log_frame.pack(fill="both", expand=True, padx=20, pady=(0, 10))
 
@@ -105,37 +106,35 @@ class HoneyShieldApp:
         )
         self.log_box.pack(fill="both", expand=True, padx=4, pady=4)
 
-        # colour tags
-        self.log_box.tag_configure("alert",   foreground=DANGER)
-        self.log_box.tag_configure("warn",    foreground=WARN)
-        self.log_box.tag_configure("ok",      foreground=ACCENT)
-        self.log_box.tag_configure("dim",     foreground=TEXT_DIM)
+        self.log_box.tag_configure("alert", foreground=DANGER)
+        self.log_box.tag_configure("warn",  foreground=WARN)
+        self.log_box.tag_configure("ok",    foreground=ACCENT)
+        self.log_box.tag_configure("dim",   foreground=TEXT_DIM)
 
         # ── bottom toolbar ────────────────────────────────────────────────────
         bar = tk.Frame(self.root, bg=BG, pady=8)
         bar.pack(fill="x", padx=20)
 
-        self.start_btn = self._btn(bar, "▶  Start Monitoring",
+        self.start_btn = self._btn(bar, "Start Monitoring",
                                    self._toggle_monitoring,
                                    bg="#003322", fg=ACCENT,
                                    font=("Courier New", 11, "bold"))
         self.start_btn.pack(side="left", padx=(0, 8))
 
-        self._btn(bar, "🔄  Restore Decoys",
+        self._btn(bar, "Restore Decoys",
                   self._restore_decoys).pack(side="left", padx=4)
-        self._btn(bar, "🗑   Remove Decoys",
+        self._btn(bar, "Remove Decoys",
                   self._remove_decoys).pack(side="left", padx=4)
-        self._btn(bar, "✉  Email Settings",
-                  self._open_email_settings).pack(side="left", padx=4)
-        self._btn(bar, "ℹ  Help",
+        self._btn(bar, "Telegram Settings",
+                  self._open_telegram_settings).pack(side="left", padx=4)
+        self._btn(bar, "Help",
                   self._show_help).pack(side="right")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Widget helpers
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _btn(self, parent, text, cmd, bg=BG3, fg=TEXT,
-             font=FONT_SM):
+    def _btn(self, parent, text, cmd, bg=BG3, fg=TEXT, font=FONT_SM):
         return tk.Button(parent, text=text, command=cmd,
                          bg=bg, fg=fg, font=font,
                          relief="flat", padx=10, pady=5,
@@ -154,23 +153,25 @@ class HoneyShieldApp:
         return val_lbl
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Logging (thread-safe via `after`)
+    # Logging (thread-safe via after)
     # ══════════════════════════════════════════════════════════════════════════
 
     def _log(self, msg: str):
         self.root.after(0, self._log_sync, msg)
 
     def _log_sync(self, msg: str):
-        ts = datetime.now().strftime("%H:%M:%S")
+        ts   = datetime.now().strftime("%H:%M:%S")
         line = f"[{ts}]  {msg}\n"
 
         tag = "dim"
-        ml = msg.lower()
-        if "alert" in ml or "🚨" in ml or "decoy" in ml and "modif" in ml:
+        ml  = msg.lower()
+        if "alert" in ml or "decoy" in ml and "modif" in ml:
             tag = "alert"
-        elif "⚠" in ml or "entropy" in ml or "warn" in ml:
+        elif "entropy" in ml or "warn" in ml or "high" in ml:
             tag = "warn"
-        elif any(k in ml for k in ("ready","created","restored","start","✅","👁","🍯")):
+        elif any(k in ml for k in ("ready", "created", "restored",
+                                   "start", "watching", "saved",
+                                   "sent", "registered", "snapshot")):
             tag = "ok"
 
         self.log_box.config(state="normal")
@@ -178,7 +179,6 @@ class HoneyShieldApp:
         self.log_box.see("end")
         self.log_box.config(state="disabled")
 
-        # update counters
         if "entropy" in ml:
             self._entropy_count += 1
             self.stat_entropy.config(text=str(self._entropy_count))
@@ -207,11 +207,13 @@ class HoneyShieldApp:
             messagebox.showerror("Error", f"Folder not found:\n{watch}")
             return
 
-        self._log(f"🍯  Creating decoy files in {watch} …")
+        self._log(f"Creating decoy files in {watch} ...")
         self.decoy_paths = create_decoys(watch, self._log)
         self.stat_decoys.config(text=str(len(self.decoy_paths)))
 
-        decoy_set = set(self.decoy_paths)
+        # normalize paths to avoid Windows backslash mismatch
+        decoy_set = {str(Path(p).resolve()) for p in self.decoy_paths}
+
         self.engine = ThreatEngine(
             watched_paths=[watch],
             decoy_paths=decoy_set,
@@ -221,45 +223,52 @@ class HoneyShieldApp:
         self.engine.start()
 
         self.running.set(True)
-        self.start_btn.config(text="■  Stop Monitoring",
+        self.start_btn.config(text="Stop Monitoring",
                               bg="#330000", fg=DANGER)
-        self.status_lbl.config(text="● ACTIVE", fg=ACCENT)
+        self.status_lbl.config(text="ACTIVE", fg=ACCENT)
 
     def _stop_monitoring(self):
         if self.engine:
             self.engine.stop()
             self.engine = None
         self.running.set(False)
-        self.start_btn.config(text="▶  Start Monitoring",
+        self.start_btn.config(text="Start Monitoring",
                               bg="#003322", fg=ACCENT)
-        self.status_lbl.config(text="● IDLE", fg=DIM)
-        self._log("⏹  Monitoring stopped.")
+        self.status_lbl.config(text="IDLE", fg=DIM)
+        self._log("Monitoring stopped.")
 
     def _on_alert(self, reason: str, path: str):
-        self._alert_count += 1
-        self.root.after(0, self.stat_alerts.config,
-                        {"text": str(self._alert_count), "fg": DANGER})
-        self.root.after(0, self.status_lbl.config,
-                        {"text": "● THREAT", "fg": DANGER})
+        # update alert counter and status on main thread
+        self.root.after(0, self._update_alert_ui, reason, path)
 
+    def _update_alert_ui(self, reason: str, path: str):
+        self._alert_count += 1
+        self.stat_alerts.config(text=str(self._alert_count))
+        self.status_lbl.config(text="THREAT", fg=DANGER)
+
+        # show popup — reset alert state when dismissed
         show_popup_alert(
             reason, path,
-            on_quarantine=lambda: restore_decoys(
-                self.watch_dir.get(), self._log),
+            on_quarantine=lambda: self._restore_decoys(),
+            on_dismiss=lambda: self._reset_alert_state(),
         )
 
-        # email if configured
-        if self.email_cfg:
-            send_email_alert(
-                smtp_host  = self.email_cfg.get("smtp_host", "smtp.gmail.com"),
-                smtp_port  = int(self.email_cfg.get("smtp_port", 465)),
-                sender     = self.email_cfg["sender"],
-                password   = self.email_cfg["password"],
-                recipient  = self.email_cfg["recipient"],
-                reason     = reason,
-                path       = path,
+        # telegram alert if configured
+        if self.telegram_cfg.get("bot_token") and self.telegram_cfg.get("chat_id"):
+            send_telegram_alert(
+                bot_token = self.telegram_cfg["bot_token"],
+                chat_id   = self.telegram_cfg["chat_id"],
+                reason    = reason,
+                path      = path,
             )
-            self._log("✉  Alert e-mail sent.")
+            self._log("Telegram alert sent.")
+
+    def _reset_alert_state(self):
+        """Called when user clicks Dismiss on the alert popup."""
+        if self.engine:
+            self.engine.reset_alert()
+        self.status_lbl.config(text="ACTIVE", fg=ACCENT)
+        self._log("Alert dismissed - monitoring resumed.")
 
     def _restore_decoys(self):
         if not self.watch_dir.get():
@@ -269,46 +278,46 @@ class HoneyShieldApp:
             get_decoy_dir(self.watch_dir.get()).glob("*"))
         self.stat_decoys.config(text=str(len(self.decoy_paths)))
         if self.engine:
-            self.engine.decoy_paths = set(str(p) for p in self.decoy_paths)
+            self.engine.decoy_paths = {
+                str(Path(p).resolve()).lower() for p in self.decoy_paths
+            }
             self.engine._snapshot_decoys()
+            self.engine.reset_alert()
 
     def _remove_decoys(self):
-        if not messagebox.askyesno(
-                "Confirm", "Remove all decoy files?"):
+        if not messagebox.askyesno("Confirm", "Remove all decoy files?"):
             return
         remove_decoys(self.watch_dir.get(), self._log)
         self.decoy_paths = []
         self.stat_decoys.config(text="0")
 
-    def _open_email_settings(self):
+    # ── Telegram settings dialog ──────────────────────────────────────────────
+
+    def _open_telegram_settings(self):
         win = tk.Toplevel(self.root)
-        win.title("Email Alert Settings")
+        win.title("Telegram Alert Settings")
         win.configure(bg=BG)
         win.resizable(False, False)
 
         fields = [
-            ("SMTP Host",  "smtp_host",  "smtp.gmail.com"),
-            ("SMTP Port",  "smtp_port",  "465"),
-            ("Sender",     "sender",     "you@gmail.com"),
-            ("Password",   "password",  ""),
-            ("Recipient",  "recipient", "you@gmail.com"),
+            ("Bot Token", "bot_token", "123456789:ABCDefgh..."),
+            ("Chat ID",   "chat_id",   "123456789"),
         ]
         entries = {}
         for i, (label, key, placeholder) in enumerate(fields):
             tk.Label(win, text=label, font=FONT_SM,
                      fg=TEXT, bg=BG).grid(row=i, column=0,
-                     sticky="e", padx=12, pady=6)
-            var = tk.StringVar(value=self.email_cfg.get(key, placeholder))
-            show = "*" if key == "password" else ""
-            ent = tk.Entry(win, textvariable=var, show=show,
-                           bg=BG3, fg=TEXT, insertbackground=ACCENT,
-                           relief="flat", font=FONT_MONO, width=32)
-            ent.grid(row=i, column=1, padx=12, pady=6)
+                     sticky="e", padx=12, pady=8)
+            var = tk.StringVar(value=self.telegram_cfg.get(key, placeholder))
+            tk.Entry(win, textvariable=var,
+                     bg=BG3, fg=TEXT, insertbackground=ACCENT,
+                     relief="flat", font=FONT_MONO, width=40).grid(
+                row=i, column=1, padx=12, pady=8)
             entries[key] = var
 
         def _save():
-            self.email_cfg = {k: v.get() for k, v in entries.items()}
-            self._log("✉  Email settings saved.")
+            self.telegram_cfg = {k: v.get() for k, v in entries.items()}
+            self._log("Telegram settings saved.")
             win.destroy()
 
         tk.Button(win, text="Save", command=_save,
@@ -316,22 +325,24 @@ class HoneyShieldApp:
                   relief="flat", padx=12, pady=6).grid(
             row=len(fields), column=0, columnspan=2, pady=12)
 
+    # ── Help dialog ───────────────────────────────────────────────────────────
+
     def _show_help(self):
         msg = (
-            "HoneyShield — Ransomware Early-Warning System\n\n"
+            "HoneyShield - Ransomware Early-Warning System\n\n"
             "How it works:\n"
-            "  1. Creates hidden 'decoy' files with fake sensitive data.\n"
+            "  1. Creates hidden decoy files with fake sensitive data.\n"
             "  2. Monitors your chosen folder in real time.\n"
             "  3. If files change rapidly OR a decoy is modified,\n"
             "     you get an instant pop-up alert.\n\n"
             "Thresholds:\n"
-            "  • Burst: 15+ file events in 10 seconds\n"
-            "  • Entropy: >7.2 bits/byte (encrypted data)\n"
-            "  • Decoy tamper: any change to a honeypot file\n\n"
+            "  Burst  : 15+ file events in 10 seconds\n"
+            "  Entropy: >7.2 bits/byte (encrypted data)\n"
+            "  Decoy  : any change to a honeypot file\n\n"
             "Buttons:\n"
-            "  Restore Decoys — re-create decoy files after tampering\n"
-            "  Remove Decoys  — clean up all honeypot files\n"
-            "  Email Settings — get alerts via Gmail / SMTP\n"
+            "  Restore Decoys    - re-create decoy files after tampering\n"
+            "  Remove Decoys     - clean up all honeypot files\n"
+            "  Telegram Settings - get alerts via Telegram bot\n"
         )
         messagebox.showinfo("Help", msg)
 
@@ -341,7 +352,8 @@ class HoneyShieldApp:
 def main():
     root = tk.Tk()
     app  = HoneyShieldApp(root)
-    root.protocol("WM_DELETE_WINDOW", lambda: (app._stop_monitoring(), root.destroy()))
+    root.protocol("WM_DELETE_WINDOW",
+                  lambda: (app._stop_monitoring(), root.destroy()))
     root.mainloop()
 
 

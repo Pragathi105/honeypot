@@ -31,7 +31,7 @@ Three threat signals trigger an alert:
 
 When triggered:
 - 🚨 Pop-up alert window (dark-red, always-on-top)
-- ✉ Optional e-mail via SMTP (Gmail, etc.)
+- 📲 Optional Telegram alert
 - 🔄 One-click decoy restore
 
 ---
@@ -65,20 +65,14 @@ honeypot/
 
 ---
 
-## Email alerts (optional)
+## Telegram alerts (optional)
 
-Click **✉ Email Settings** in the dashboard and fill in:
+Click **Telegram Settings** in the dashboard and fill in:
 
 | Field | Example |
 |-------|---------|
-| SMTP Host | `smtp.gmail.com` |
-| SMTP Port | `465` |
-| Sender | `youraddress@gmail.com` |
-| Password | App Password (not your login password) |
-| Recipient | `youraddress@gmail.com` |
-
-> For Gmail, create an **App Password** under  
-> Google Account → Security → 2-Step Verification → App passwords.
+| Bot Token | `123456789:ABCDefgh...` |
+| Chat ID | `123456789` |
 
 ---
 
@@ -89,8 +83,8 @@ Click **✉ Email Settings** in the dashboard and fill in:
 - **Change thresholds** — edit `BURST_THRESHOLD`, `BURST_WINDOW_SECS`,  
   `ENTROPY_THRESHOLD` at the top of `monitor.py`.
 - **Watch multiple folders** — pass a list of paths to `ThreatEngine`.
-- **SMS alerts** — replace the `smtplib` call in `alerts.py` with  
-  Twilio's `client.messages.create(...)`.
+- **More alert channels** — add another sender function in `alerts.py` and
+  call it from `gui.py`.
 
 ---
 
