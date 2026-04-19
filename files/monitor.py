@@ -10,6 +10,7 @@ import hashlib
 import threading
 import collections
 import getpass
+import difflib
 from datetime import datetime
 from pathlib import Path
 from alerts import capture_screenshot
@@ -70,6 +71,15 @@ def file_hash(path: str) -> str:
     return h.hexdigest()
 
 
+def read_text_preview(path: str, max_chars: int = 12000) -> str | None:
+    """Read a text preview for diffing. Returns None for non-text files."""
+    try:
+        data = Path(path).read_text(encoding="utf-8", errors="strict")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return data[:max_chars]
+
+
 class HoneypotEventHandler(FileSystemEventHandler):
     """Watchdog handler that feeds events into the threat engine."""
 
@@ -101,6 +111,7 @@ class ThreatEngine:
         self._lock          = threading.Lock()
         self._alerted       = False
         self._baseline: dict = {}   # normalized path -> hash
+        self._baseline_text: dict = {}  # normalized path -> original text preview
         self._observer      = None
 
     # public API
@@ -208,9 +219,42 @@ class ThreatEngine:
         for p in self.decoy_paths:
             if os.path.isfile(p):
                 self._baseline[p] = file_hash(p)
+                self._baseline_text[p] = read_text_preview(p)
                 print(f"[DEBUG] Snapshot: {p} -> {self._baseline[p]}")
             else:
                 print(f"[DEBUG] Snapshot MISSING: {p}")
+
+    def _build_diff_lines(self, path: str) -> list[dict]:
+        normalized = normalize(path)
+        before = self._baseline_text.get(normalized)
+        after = read_text_preview(path)
+        if before is None or after is None:
+            return []
+
+        before_lines = before.splitlines()
+        after_lines = after.splitlines()
+        matcher = difflib.SequenceMatcher(a=before_lines, b=after_lines)
+        diff_lines: list[dict] = []
+
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                continue
+            if tag in ("replace", "delete"):
+                for offset, line in enumerate(before_lines[i1:i2], start=i1 + 1):
+                    diff_lines.append({
+                        "kind": "-",
+                        "line_no": offset,
+                        "text": line,
+                    })
+            if tag in ("replace", "insert"):
+                for offset, line in enumerate(after_lines[j1:j2], start=j1 + 1):
+                    diff_lines.append({
+                        "kind": "+",
+                        "line_no": offset,
+                        "text": line,
+                    })
+
+        return diff_lines[:24]
 
     def _fire_alert(self, reason: str, path: str):
         if self._alerted:
@@ -227,7 +271,10 @@ class ThreatEngine:
 
         # screenshot - safe, never blocks the alert
         try:
-            evidence_path = capture_screenshot(reason)
+            diff_lines = []
+            if reason.startswith("DECOY FILE"):
+                diff_lines = self._build_diff_lines(path)
+            evidence_path = capture_screenshot(reason, path=path, diff_lines=diff_lines)
             self.log_callback(f"Screenshot saved: {evidence_path}")
         except Exception as e:
             self.log_callback(f"Screenshot failed: {e}")
@@ -238,7 +285,7 @@ class ThreatEngine:
 
     def _write_threat_log(self, reason, path, info):
         """Write persistent threat log to disk."""
-        log_path = Path.home() / "HoneyShield_Evidence" / "threat_log.txt"
+        log_path = Path.home() / "SilentSentinel_Evidence" / "threat_log.txt"
         log_path.parent.mkdir(exist_ok=True)
         with open(log_path, "a") as f:
             f.write(
@@ -249,4 +296,4 @@ class ThreatEngine:
                 f"Reason={reason} "
                 f"File={path}\n"
             )
-        self.log_callback(f"Threat logged: ~/HoneyShield_Evidence/threat_log.txt")
+        self.log_callback(f"Threat logged: ~/SilentSentinel_Evidence/threat_log.txt")

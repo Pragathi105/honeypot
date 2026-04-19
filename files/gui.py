@@ -1,5 +1,5 @@
 """
-gui.py — HoneyShield dashboard (Tkinter).
+gui.py — SilentSentinel dashboard (Tkinter).
 Dark terminal aesthetic with live event log and status indicators.
 """
 
@@ -28,10 +28,10 @@ FONT_BIG = ("Courier New", 14, "bold")
 FONT_SM  = ("Courier New", 9)
 
 
-class HoneyShieldApp:
+class SilentSentinelApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("HoneyShield — Ransomware Early-Warning System")
+        root.title("SilentSentinel — Ransomware Early-Warning System")
         root.configure(bg=BG)
         root.geometry("860x640")
         root.minsize(760, 560)
@@ -44,7 +44,7 @@ class HoneyShieldApp:
 
         self._build_ui()
         set_root(root)   # register root with alerts.py for thread-safe popups
-        self._log("HoneyShield ready. Choose a folder and click Start Monitoring.")
+        self._log("SilentSentinel ready. Choose a folder and click Start Monitoring.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # UI construction
@@ -55,7 +55,7 @@ class HoneyShieldApp:
         top = tk.Frame(self.root, bg=BG, pady=10)
         top.pack(fill="x", padx=20)
 
-        tk.Label(top, text="HoneyShield", font=FONT_BIG,
+        tk.Label(top, text="SilentSentinel", font=FONT_BIG,
                  fg=ACCENT, bg=BG).pack(side="left")
 
         self.status_lbl = tk.Label(top, text="IDLE",
@@ -255,13 +255,16 @@ class HoneyShieldApp:
 
         # telegram alert if configured
         if self.telegram_cfg.get("bot_token") and self.telegram_cfg.get("chat_id"):
-            send_telegram_alert(
+            ok, detail = send_telegram_alert(
                 bot_token = self.telegram_cfg["bot_token"],
                 chat_id   = self.telegram_cfg["chat_id"],
                 reason    = reason,
                 path      = path,
             )
-            self._log("Telegram alert sent.")
+            if ok:
+                self._log(detail)
+            else:
+                self._log(f"Telegram alert failed: {detail}")
 
     def _reset_alert_state(self):
         """Called when user clicks Dismiss on the alert popup."""
@@ -316,7 +319,7 @@ class HoneyShieldApp:
             entries[key] = var
 
         def _save():
-            self.telegram_cfg = {k: v.get() for k, v in entries.items()}
+            self.telegram_cfg = {k: v.get().strip() for k, v in entries.items()}
             self._log("Telegram settings saved.")
             win.destroy()
 
@@ -329,7 +332,7 @@ class HoneyShieldApp:
 
     def _show_help(self):
         msg = (
-            "HoneyShield - Ransomware Early-Warning System\n\n"
+            "SilentSentinel - Ransomware Early-Warning System\n\n"
             "How it works:\n"
             "  1. Creates hidden decoy files with fake sensitive data.\n"
             "  2. Monitors your chosen folder in real time.\n"
@@ -351,7 +354,7 @@ class HoneyShieldApp:
 
 def main():
     root = tk.Tk()
-    app  = HoneyShieldApp(root)
+    app  = SilentSentinelApp(root)
     root.protocol("WM_DELETE_WINDOW",
                   lambda: (app._stop_monitoring(), root.destroy()))
     root.mainloop()

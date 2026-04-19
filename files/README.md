@@ -1,4 +1,4 @@
-# 🍯 HoneyShield — Personal Ransomware Early-Warning System
+# 🍯 SilentSentinel — Personal Ransomware Early-Warning System
 
 A lightweight desktop honeypot that detects ransomware-like activity on your
 PC **before** your real files get encrypted.
@@ -20,7 +20,7 @@ Desktop / Documents folder
         └── your real files …
 ```
 
-HoneyShield watches the folder in real time using **watchdog**.  
+SilentSentinel watches the folder in real time using **watchdog**.  
 Three threat signals trigger an alert:
 
 | Signal | Default threshold |
